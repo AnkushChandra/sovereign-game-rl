@@ -24,34 +24,34 @@ class SovereignEnv(gym.Env):
     """
     SOVEREIGN: A 3-nation geopolitical strategy environment for DRL research.
 
-    Observation (flat float32 vector, length = NUM_TERRITORIES + 7):
-        [0 .. NUM_TERRITORIES-1]  territory control  (0=Contested, 1=I, 2=D, 3=N)
-        [NUM_TERRITORIES]         invader_units  (normalised)
-        [NUM_TERRITORIES+1]       defender_units (normalised)
-        [NUM_TERRITORIES+2]       legitimacy     L  ∈ [0, 1]
-        [NUM_TERRITORIES+3]       economy        E  ∈ [0, 1]
-        [NUM_TERRITORIES+4]       theta          θ  ∈ [-1, 1]
-        [NUM_TERRITORIES+5]       t_occ          (normalised by MAX_STEPS)
-        [NUM_TERRITORIES+6]       step           (normalised by MAX_STEPS)
+    Observation (flat float32 vector, length = NUM_TERRITORIES * 5 + 4):
+        territory control M       one-hot |V| x 3 for Invader/Defender/Neutral
+        invader unit map U_I      |V| integer vector, normalised
+        defender unit map U_D     |V| integer vector, normalised
+        legitimacy L              ∈ [0, 1]
+        economy E                 ∈ [0, 1]
+        neutral posture θ         ∈ [-1, 1]
+        occupation duration t_occ normalised by MAX_STEPS
 
     Action:  Discrete(20) — 5 political × 4 military
     """
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, render_mode=None, seed=None):
+    def __init__(self, render_mode=None, seed=None, experiment_config=None):
         """Initialise the SOVEREIGN environment."""
         super().__init__()
 
         self.render_mode = render_mode
+        self.experiment_config = experiment_config
 
         # Action space: 5 political × 4 military = 20
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
-        # Observation space: compact float vector
-        obs_size = NUM_TERRITORIES + 7
+        # Observation space: PDF Section 4.1 state variables, flattened
+        obs_size = (NUM_TERRITORIES * 3) + (NUM_TERRITORIES * 2) + 4
         self.observation_space = spaces.Box(
-            low=-1.0, high=3.0, shape=(obs_size,), dtype=np.float32,
+            low=-1.0, high=1.0, shape=(obs_size,), dtype=np.float32,
         )
 
         # Internal state (set on reset)
@@ -73,7 +73,7 @@ class SovereignEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
-        self._state = init_state(rng=self._rng)
+        self._state = init_state(rng=self._rng, experiment_config=self.experiment_config)
 
         obs = self._build_obs()
         info = {"step": 0, "message": "Episode started."}
@@ -122,6 +122,7 @@ class SovereignEnv(gym.Env):
         print(
             f"Step {s['step']:>3d} | "
             f"L={s['legitimacy']:.2f}  E={s['economy']:.2f}  "
+            f"D_E={s['defender_economy']:.2f}  "
             f"θ={s['theta']:+.3f}  t_occ={s['t_occ']}  "
             f"I_units={s['invader_units']}  D_units={s['defender_units']}"
         )
@@ -142,25 +143,23 @@ class SovereignEnv(gym.Env):
     def _build_obs(self):
         """
         Convert internal state dict to a flat numpy observation vector.
-
-        Controller encoding: Contested=0, I=1, D=2, N=3
         """
         s = self._state
-        ctrl_map = {"Contested": 0.0, "I": 1.0, "D": 2.0, "N": 3.0}
+        ctrl_map = {"I": 0, "D": 1, "N": 2}
+        territory_ctrl = np.zeros((NUM_TERRITORIES, 3), dtype=np.float32)
+        for territory in s["territories"]:
+            controller = territory["controller"]
+            if controller in ctrl_map:
+                territory_ctrl[territory["id"], ctrl_map[controller]] = 1.0
 
-        territory_ctrl = np.array(
-            [ctrl_map[t["controller"]] for t in s["territories"]],
-            dtype=np.float32,
-        )
+        invader_units = s["invader_unit_map"].astype(np.float32) / 15.0
+        defender_units = s["defender_unit_map"].astype(np.float32) / 15.0
 
         scalars = np.array([
-            s["invader_units"] / 15.0,          # normalised
-            s["defender_units"] / 15.0,          # normalised
             s["legitimacy"],
             s["economy"],
             s["theta"],
             s["t_occ"] / MAX_STEPS,
-            s["step"] / MAX_STEPS,
         ], dtype=np.float32)
 
-        return np.concatenate([territory_ctrl, scalars])
+        return np.concatenate([territory_ctrl.flatten(), invader_units, defender_units, scalars])

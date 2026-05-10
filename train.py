@@ -21,11 +21,35 @@ from dqn_agent import DQNAgent
 from game_logic import decode_action
 from config import (
     DQN_TOTAL_EPISODES, DQN_EVAL_EVERY, DQN_EVAL_EPISODES,
-    MAX_STEPS,
+    MAX_STEPS, DEFAULT_EXPERIMENT_CONFIG, SECTION10_EXPERIMENTS,
 )
 
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "dqn_sovereign.pt")
+
+EXPERIMENT_PRESETS = {
+    "full": DEFAULT_EXPERIMENT_CONFIG,
+    "no-legitimacy": SECTION10_EXPERIMENTS[1]["config"],
+    "no-occupation": SECTION10_EXPERIMENTS[2]["config"],
+    "no-neutral": SECTION10_EXPERIMENTS[3]["config"],
+    "baseline": SECTION10_EXPERIMENTS[4]["config"],
+    "earlier-sanctions": SECTION10_EXPERIMENTS[5]["config"],
+    "later-sanctions": SECTION10_EXPERIMENTS[6]["config"],
+}
+
+
+def build_experiment_config(args):
+    config = DEFAULT_EXPERIMENT_CONFIG.copy()
+    config.update(EXPERIMENT_PRESETS[args.experiment])
+    if args.no_legitimacy:
+        config["legitimacy_active"] = False
+    if args.no_occupation:
+        config["occupation_active"] = False
+    if args.no_neutral:
+        config["neutral_active"] = False
+    if args.sanction_threshold is not None:
+        config["sanction_threshold"] = args.sanction_threshold
+    return config
 
 
 # ─────────────────────────────────────────────
@@ -62,7 +86,8 @@ def evaluate(agent, env, n_episodes=DQN_EVAL_EPISODES, verbose=False):
 # Training loop
 # ─────────────────────────────────────────────
 
-def train(total_episodes=DQN_TOTAL_EPISODES, seed=0, save_path=MODEL_PATH):
+def train(total_episodes=DQN_TOTAL_EPISODES, seed=0, save_path=MODEL_PATH,
+          experiment_config=None, experiment_name="full"):
     """
     Run the DQN training loop.
 
@@ -74,8 +99,8 @@ def train(total_episodes=DQN_TOTAL_EPISODES, seed=0, save_path=MODEL_PATH):
     Returns:
         history : dict with lists of per-episode metrics
     """
-    env = SovereignEnv(seed=seed)
-    eval_env = SovereignEnv(seed=seed + 1000)
+    env = SovereignEnv(seed=seed, experiment_config=experiment_config)
+    eval_env = SovereignEnv(seed=seed + 1000, experiment_config=experiment_config)
 
     obs, _ = env.reset(seed=seed)
     agent = DQNAgent(
@@ -86,6 +111,8 @@ def train(total_episodes=DQN_TOTAL_EPISODES, seed=0, save_path=MODEL_PATH):
 
     print("=" * 72)
     print(f"Training DQN on SOVEREIGN for {total_episodes} episodes")
+    print(f"  experiment={experiment_name}")
+    print(f"  config={env._state['experiment_config'] if env._state else experiment_config}")
     print(f"  obs_dim={obs.shape[0]}   n_actions={env.action_space.n}")
     print(f"  device={agent.device}")
     print("=" * 72)
@@ -177,8 +204,8 @@ def demo_greedy_episode(agent, env=None, render=True):
         if render:
             print(
                 f"step {step+1:>3d} | {pol:<15s} {mil:<9s} "
-                f"r={reward:+.3f}  L={obs[-5]:.2f}  E={obs[-4]:.2f}  "
-                f"θ={obs[-3]:+.2f}  t_occ={int(obs[-2]*MAX_STEPS)}"
+                f"r={reward:+.3f}  L={obs[-4]:.2f}  E={obs[-3]:.2f}  "
+                f"θ={obs[-2]:+.2f}  t_occ={int(obs[-1]*MAX_STEPS)}"
             )
         if terminated or truncated:
             print(f"\nTerminal: {info.get('terminal_reason')}  "
@@ -202,23 +229,46 @@ def main():
                         help="Run one greedy demo episode after training/loading.")
     parser.add_argument("--model", type=str, default=MODEL_PATH,
                         help="Path to save / load the model.")
+    parser.add_argument(
+        "--experiment",
+        choices=sorted(EXPERIMENT_PRESETS.keys()),
+        default="full",
+        help="Section 10 preset to train/evaluate.",
+    )
+    parser.add_argument("--no-legitimacy", action="store_true",
+                        help="Disable legitimacy L effects.")
+    parser.add_argument("--no-occupation", action="store_true",
+                        help="Disable occupation duration t_occ effects.")
+    parser.add_argument("--no-neutral", action="store_true",
+                        help="Disable neutral posture θ effects.")
+    parser.add_argument("--sanction-threshold", type=float, default=None,
+                        help="Override the neutral sanctions threshold.")
     args = parser.parse_args()
+    experiment_config = build_experiment_config(args)
 
     if args.eval:
-        env = SovereignEnv(seed=args.seed)
+        env = SovereignEnv(seed=args.seed, experiment_config=experiment_config)
         obs, _ = env.reset()
         agent = DQNAgent(obs.shape[0], env.action_space.n, seed=args.seed)
         agent.load(args.model)
+        print(f"Evaluating experiment={args.experiment}")
+        print(f"config={env._state['experiment_config']}")
         mean_r, mean_len, reasons = evaluate(agent, env, n_episodes=10, verbose=True)
         print(f"\nEval over 10 episodes: mean_reward={mean_r:+.2f}  mean_len={mean_len:.1f}")
         if args.demo:
             demo_greedy_episode(agent, env)
         return
 
-    history, agent = train(total_episodes=args.episodes, seed=args.seed, save_path=args.model)
+    history, agent = train(
+        total_episodes=args.episodes,
+        seed=args.seed,
+        save_path=args.model,
+        experiment_config=experiment_config,
+        experiment_name=args.experiment,
+    )
 
     # Final evaluation
-    eval_env = SovereignEnv(seed=args.seed + 9999)
+    eval_env = SovereignEnv(seed=args.seed + 9999, experiment_config=experiment_config)
     mean_r, mean_len, reasons = evaluate(agent, eval_env, n_episodes=10, verbose=True)
     print(f"\nFinal eval: mean_reward={mean_r:+.2f}  mean_len={mean_len:.1f}")
 

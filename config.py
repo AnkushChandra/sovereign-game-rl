@@ -169,3 +169,78 @@ DQN_EPS_DECAY_STEPS = 20_000      # linear decay steps
 DQN_TOTAL_EPISODES = 300
 DQN_EVAL_EVERY     = 25           # run a greedy eval every N episodes
 DQN_EVAL_EPISODES  = 5
+
+DEFAULT_EXPERIMENT_CONFIG = {
+    "legitimacy_active": True,
+    "occupation_active": True,
+    "neutral_active": True,
+    "sanction_threshold": SANCTION_THRESHOLD,
+}
+
+SECTION10_EXPERIMENTS = [
+    {
+        "name": "Full model",
+        "expected_policy": "Negotiate or deter",
+        "config": {
+            "legitimacy_active": True,
+            "occupation_active": True,
+            "neutral_active": True,
+        },
+    },
+    {
+        "name": "No legitimacy",
+        "expected_policy": "Slower invasion",
+        "config": {
+            "legitimacy_active": False,
+            "occupation_active": True,
+            "neutral_active": True,
+        },
+    },
+    {
+        "name": "No occupation cost",
+        "expected_policy": "Partial invasion",
+        "config": {
+            "legitimacy_active": True,
+            "occupation_active": False,
+            "neutral_active": True,
+        },
+    },
+    {
+        "name": "No neutral posture",
+        "expected_policy": "Invasion",
+        "config": {
+            "legitimacy_active": True,
+            "occupation_active": True,
+            "neutral_active": False,
+        },
+    },
+    {
+        "name": "Baseline all off",
+        "expected_policy": "Always invade",
+        "config": {
+            "legitimacy_active": False,
+            "occupation_active": False,
+            "neutral_active": False,
+        },
+    },
+    {
+        "name": "Earlier sanctions",
+        "expected_policy": "More negotiation / deterrence",
+        "config": {
+            "legitimacy_active": True,
+            "occupation_active": True,
+            "neutral_active": True,
+            "sanction_threshold": 0.45,
+        },
+    },
+    {
+        "name": "Later sanctions",
+        "expected_policy": "More aggression tolerated",
+        "config": {
+            "legitimacy_active": True,
+            "occupation_active": True,
+            "neutral_active": True,
+            "sanction_threshold": 0.75,
+        },
+    },
+]

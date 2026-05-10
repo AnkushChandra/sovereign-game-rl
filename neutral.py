@@ -110,9 +110,12 @@ def check_threshold_events(theta, state):
         events : list[str]
     """
     events = []
+    exp_config = state.get("experiment_config", {})
+    sanction_threshold = exp_config.get("sanction_threshold", SANCTION_THRESHOLD)
+    legitimacy_active = exp_config.get("legitimacy_active", True)
 
     # ── Sanctions (θ > 0.60) ──────────────────────
-    if theta > SANCTION_THRESHOLD and not state["sanctions_active"]:
+    if theta > sanction_threshold and not state["sanctions_active"]:
         state["sanctions_active"] = True
         events.append("SANCTIONS_IMPOSED")
 
@@ -129,13 +132,24 @@ def check_threshold_events(theta, state):
 
     # Apply ongoing sanction cost
     if state["sanctions_active"]:
-        state["economy"] = max(0.0, state["economy"] - SANCTION_ECON_PENALTY)
+        state["economy_modifier"] = max(
+            -1.0,
+            state.get("economy_modifier", 0.0) - SANCTION_ECON_PENALTY,
+        )
 
     # ── Coalition (θ > 0.85) — one-time event ────
     if theta > COALITION_THRESHOLD and not state["coalition_fired"]:
         state["coalition_fired"] = True
+        # Reinforcements from the Neutral side are treated as ground units.
         state["defender_units"] += COALITION_DEFENDER_BONUS_UNITS
-        state["legitimacy"] = max(0.0, state["legitimacy"] - COALITION_L_PENALTY)
+        state["defender_ground"] = state.get("defender_ground", 0) + COALITION_DEFENDER_BONUS_UNITS
+        defender_home = next(
+            t["id"] for t in state["territories"]
+            if t["is_home"] == "D"
+        )
+        state["defender_unit_map"][defender_home] += COALITION_DEFENDER_BONUS_UNITS
+        if legitimacy_active:
+            state["legitimacy"] = max(0.0, state["legitimacy"] - COALITION_L_PENALTY)
         events.append("NEUTRAL_JOINS_DEFENDER")
 
     # ── Supply routes open (θ < -0.60) ───────────
@@ -144,13 +158,14 @@ def check_threshold_events(theta, state):
         events.append("SUPPLY_ROUTES_OPEN")
 
     # ── Neutral allies Invader (θ < -0.85) — one-time ──
-    # PDF: "Defender E reduced; L −0.05".
-    # Since we do not track a separate Defender supply index, we substitute
-    # an equivalent military hit by destroying one Defender unit.
     if theta < ALLY_INVADER_THRESHOLD and not state["ally_invader_fired"]:
         state["ally_invader_fired"] = True
-        state["legitimacy"] = max(0.0, state["legitimacy"] - ALLY_INVADER_L_PENALTY)
-        state["defender_units"] = max(0, state["defender_units"] - 1)
+        if legitimacy_active:
+            state["legitimacy"] = max(0.0, state["legitimacy"] - ALLY_INVADER_L_PENALTY)
+        state["defender_economy"] = max(
+            0.0,
+            state.get("defender_economy", 1.0) - ALLY_INVADER_DEF_E_PENALTY,
+        )
         events.append("NEUTRAL_ALLIES_INVADER")
 
     return events

@@ -74,7 +74,7 @@ def compute_legitimacy_penalty(legitimacy):
     return 1.0 - legitimacy
 
 
-def compute_sanction_penalty(theta, economy):
+def compute_sanction_penalty(theta, economy, threshold=SANCTION_THRESHOLD):
     """
     Active only when sanctions threshold is crossed.
 
@@ -85,7 +85,7 @@ def compute_sanction_penalty(theta, economy):
     Returns:
         float
     """
-    if theta > SANCTION_THRESHOLD:
+    if theta > threshold:
         return 1.0 - economy
     return 0.0
 
@@ -129,17 +129,22 @@ def compute_reward(state, newly_captured, rng=None):
     economy     = state["economy"]
     theta       = state["theta"]
     t_occ       = state["t_occ"]
+    exp_config  = state.get("experiment_config", {})
+    legitimacy_active = exp_config.get("legitimacy_active", True)
+    occupation_active = exp_config.get("occupation_active", True)
+    neutral_active = exp_config.get("neutral_active", True)
+    sanction_threshold = exp_config.get("sanction_threshold", SANCTION_THRESHOLD)
 
     # ── Positive terms ──
     r_territory = W_TERRITORY * compute_territory_reward(territories)
     r_capture   = W_RESOURCE  * compute_resource_capture_bonus(newly_captured)
 
     # ── Negative terms ──
-    r_occ       = W_OCCUPATION  * compute_occupation_cost(t_occ)
-    r_legit     = W_LEGITIMACY  * compute_legitimacy_penalty(legitimacy)
-    r_sanction  = W_SANCTION    * compute_sanction_penalty(theta, economy)
+    r_occ       = W_OCCUPATION  * compute_occupation_cost(t_occ) if occupation_active else 0.0
+    r_legit     = W_LEGITIMACY  * compute_legitimacy_penalty(legitimacy) if legitimacy_active else 0.0
+    r_sanction  = W_SANCTION    * compute_sanction_penalty(theta, economy, sanction_threshold) if neutral_active else 0.0
 
-    insurgency_occurred, ins_pen = compute_insurgency(t_occ, rng)
+    insurgency_occurred, ins_pen = compute_insurgency(t_occ, rng) if occupation_active else (False, 0.0)
     r_insurgency = W_INSURGENCY * ins_pen
 
     # ── Net reward ──
@@ -158,5 +163,6 @@ def compute_reward(state, newly_captured, rng=None):
         "r_pos": r_pos,
         "r_neg": r_neg,
         "reward": reward,
+        "disconnected_occupied_count": state.get("disconnected_occupied_count", 0),
     }
     return reward, reward_info

@@ -103,7 +103,7 @@ class DQNAgent:
       - gradient clipping
 
     Usage:
-        agent = DQNAgent(obs_dim=16, n_actions=20)
+        agent = DQNAgent(obs_dim=49, n_actions=20)
         for each transition:
             action = agent.select_action(obs)
             ...

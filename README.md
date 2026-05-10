@@ -17,6 +17,7 @@ stochastic **Neutral** nation shifts its alignment based on Invader behaviour.
 sovereign_project/
 ├── main.py              # Random-action demo
 ├── train.py             # DQN training + evaluation
+├── section10_experiments.py # Rulebook Section 10 ablation protocol
 ├── dqn_agent.py         # DQN agent (Q-net, replay buffer, ε-greedy) from scratch
 ├── sovereign_env.py     # Gymnasium environment (SovereignEnv)
 ├── game_logic.py        # Turn structure, action decoding, state updates
@@ -65,17 +66,71 @@ python train.py --episodes 300
 Logs per-episode reward, runs a greedy evaluation every 25 episodes, and
 saves the trained weights to `dqn_sovereign.pt`.
 
+You can also train a single Section 10 condition directly with `train.py`:
+
+```bash
+python train.py --episodes 300 --experiment full
+python train.py --episodes 300 --experiment no-legitimacy
+python train.py --episodes 300 --experiment no-occupation
+python train.py --episodes 300 --experiment no-neutral
+python train.py --episodes 300 --experiment baseline
+python train.py --episodes 300 --experiment earlier-sanctions
+python train.py --episodes 300 --experiment later-sanctions
+```
+
+Manual toggles are also available:
+
+```bash
+python train.py --episodes 300 --no-legitimacy
+python train.py --episodes 300 --no-occupation
+python train.py --episodes 300 --no-neutral
+python train.py --episodes 300 --sanction-threshold 0.45
+```
+
 ### 3. Evaluate a saved agent
 
 ```bash
 python train.py --eval --demo
 ```
 
+To evaluate a model under a Section 10 condition, pass the same experiment flag:
+
+```bash
+python train.py --eval --experiment no-neutral
+```
+
+### 4. Run the PDF Section 10 experiments
+
+```bash
+python section10_experiments.py --episodes 300 --eval-episodes 10
+```
+
+For a very fast smoke test:
+
+```bash
+python section10_experiments.py --quick
+```
+
+This trains a fresh DQN agent under each ablation condition from the rulebook:
+
+| Experiment | L active | t_occ active | θ active | Expected policy |
+|------------|----------|--------------|----------|-----------------|
+| Full model | yes | yes | yes | Negotiate or deter |
+| No legitimacy | no | yes | yes | Slower invasion |
+| No occupation cost | yes | no | yes | Partial invasion |
+| No neutral posture | yes | yes | no | Invasion |
+| Baseline all off | no | no | no | Always invade |
+| Earlier sanctions | yes | yes | yes, θ threshold=0.45 | More negotiation |
+| Later sanctions | yes | yes | yes, θ threshold=0.75 | More aggression tolerated |
+
+The runner prints a comparison table with average reward, peace rate,
+aggression rate, collapse rate, and final neutral posture.
+
 ## RL Algorithm: DQN (from scratch)
 
 `dqn_agent.py` implements a standard **Deep Q-Network**:
 
-- **Q-network:** 2-layer MLP (`16 → 128 → 128 → 20`) mapping observations
+- **Q-network:** 2-layer MLP (`49 → 128 → 128 → 20`) mapping observations
   to Q-values over the 20 joint actions.
 - **Target network:** separate frozen copy, synced every 500 gradient steps.
 - **Replay buffer:** 50 000 transitions, batch size 64.
@@ -115,18 +170,42 @@ Decoding: `action = pol_index × 4 + mil_index`
 
 ## State / Observation
 
-The observation is a flat `float32` vector of length **16**:
+The observation is a flat `float32` vector of length **49**, matching the
+state variables in Section 4.1:
 
-| Index     | Variable              | Range      |
-|-----------|-----------------------|------------|
-| 0–8       | Territory control     | {0,1,2,3}  |
-| 9         | Invader units (norm.) | [0, 1]     |
-| 10        | Defender units (norm.)| [0, 1]     |
-| 11        | Legitimacy L          | [0, 1]     |
-| 12        | Economy E             | [0, 1]     |
-| 13        | Neutral posture θ     | [-1, +1]   |
-| 14        | Occupation duration   | [0, 1]     |
-| 15        | Step progress         | [0, 1]     |
+| Slice     | Variable              | Type / Range |
+|-----------|-----------------------|--------------|
+| 0–26      | Territory control `M` | one-hot `|V| × 3` for Invader, Defender, Neutral |
+| 27–35     | Invader units `U_I`   | per-territory unit vector, normalized |
+| 36–44     | Defender units `U_D`  | per-territory unit vector, normalized |
+| 45        | Legitimacy `L`        | `[0, 1]` |
+| 46        | Economy `E`           | `[0, 1]` |
+| 47        | Neutral posture `θ`   | `[-1, +1]` |
+| 48        | Occupation `t_occ`    | integer state, normalized in observation |
+
+---
+
+## Supply Lines
+
+The environment implements the rulebook's Section 3.2 connectivity rule.
+Each turn, the Invader's connected supply network is recomputed with a graph
+search starting from `Invader Home`.
+
+- **Connected territories:** Invader-controlled territories reachable from
+  `Invader Home` through other Invader-controlled territories.
+- **Disconnected occupied territories:** Invader-controlled non-home
+  territories not reachable from `Invader Home`.
+- **Economy `E`:** computed from connected resource value divided by total
+  Invader-controlled resource value, then adjusted by sanctions and political
+  economy modifiers.
+- **Defender economy:** tracked internally for the `θ < -0.85` threshold event,
+  where Neutral formally allies with the Invader and Defender `E` is reduced.
+- **Reward accounting:** Section 8 territory reward follows the rulebook formula
+  and sums resources for territories controlled by the Invader.
+- **Occupation cost:** each disconnected occupied territory adds extra
+  occupation burden.
+- **Insurgency:** probability increases with `t_occ`; each insurgency event
+  destroys one Invader unit and applies the insurgency reward penalty.
 
 ---
 

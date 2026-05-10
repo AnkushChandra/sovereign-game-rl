@@ -46,8 +46,8 @@ def run_random_episode(env, max_steps=50, verbose=True):
             print(f"\n--- Step {step + 1} ---")
             print(f"  Action {action:>2d}  →  Political: {pol:<18s} Military: {mil}")
             print(f"  Reward: {reward:+.4f}   Cumulative: {total_reward:+.4f}")
-            print(f"  L={obs[-5]:.3f}  E={obs[-4]:.3f}  θ={obs[-3]:+.3f}  "
-                  f"t_occ={obs[-2]*200:.0f}  step={obs[-1]*200:.0f}")
+            print(f"  L={obs[-4]:.3f}  E={obs[-3]:.3f}  θ={obs[-2]:+.3f}  "
+                  f"t_occ={obs[-1]*200:.0f}")
 
             # Show defender response
             d = info.get("defender", {})
