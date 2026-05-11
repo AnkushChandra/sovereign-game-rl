@@ -27,7 +27,7 @@ INITIAL_T_OCC = 0               # Occupation counter starts at 0
 # ─────────────────────────────────────────────
 # Episode limits
 # ─────────────────────────────────────────────
-MAX_STEPS = 200                 # T_max
+MAX_STEPS = 50                 # T_max
 
 # ─────────────────────────────────────────────
 # Political actions  (indices)
@@ -111,12 +111,13 @@ SANCTION_LIFT_STEPS      = 5
 # ─────────────────────────────────────────────
 # Reward weights  (Section 8)
 # ─────────────────────────────────────────────
-W_TERRITORY   = 0.30   # territory control
-W_RESOURCE    = 0.20   # newly captured resource bonus
+W_TERRITORY   = 0.05   # territory control
+W_RESOURCE    = 5.00   # newly captured resource bonus
 W_OCCUPATION  = 0.25   # occupation cost
 W_LEGITIMACY  = 0.15   # legitimacy deficit
 W_SANCTION    = 0.20   # sanction penalty
 W_INSURGENCY  = 0.10   # insurgency event
+W_STEP        = 0.05   # per-step cost to discourage stalling
 
 # ─────────────────────────────────────────────
 # Insurgency  (Section 8.3)
@@ -126,11 +127,11 @@ INSURGENCY_LAMBDA = 0.05   # hazard-rate parameter
 # ─────────────────────────────────────────────
 # Terminal rewards  (Section 9)
 # ─────────────────────────────────────────────
-TERMINAL_POLITICAL_COLLAPSE = -50.0
-TERMINAL_MILITARY_DEFEAT    = -30.0
-TERMINAL_NEGOTIATED_PEACE   = +40.0
-TERMINAL_TIME_LIMIT         =   0.0
-TERMINAL_TOTAL_CONQUEST     = +10.0
+TERMINAL_POLITICAL_COLLAPSE = -70.0
+TERMINAL_MILITARY_DEFEAT    = -50.0
+TERMINAL_NEGOTIATED_PEACE   = +100.0
+TERMINAL_TIME_LIMIT         = -100.0
+TERMINAL_TOTAL_CONQUEST     = +100.0
 
 # ─────────────────────────────────────────────
 # Negotiated-settlement conditions
@@ -147,6 +148,54 @@ DO_NOTHING_THETA_DRIFT = 0.01  # if t_occ > 0, drifts toward Defender
 
 # Number of territories
 NUM_TERRITORIES = 9
+
+# ─────────────────────────────────────────────
+# Section 10 experiment presets
+# ─────────────────────────────────────────────
+EXPERIMENT_PRESETS = {
+    # Full model: legitimacy, occupation cost, and neutral posture all active.
+    "full": {
+        "legitimacy": True,
+        "occupation": True,
+        "neutral_posture": True,
+    },
+    # Ablations from the rulebook's core experimental protocol.
+    "no_legitimacy": {
+        "legitimacy": False,
+        "occupation": True,
+        "neutral_posture": True,
+    },
+    "no_occupation": {
+        "legitimacy": True,
+        "occupation": False,
+        "neutral_posture": True,
+    },
+    "no_neutral": {
+        "legitimacy": True,
+        "occupation": True,
+        "neutral_posture": False,
+    },
+    "baseline": {
+        "legitimacy": False,
+        "occupation": False,
+        "neutral_posture": False,
+    },
+}
+
+
+def get_experiment_mechanisms(experiment="full", overrides=None):
+    """Return mechanism flags for a named Section 10 experiment preset."""
+    if experiment not in EXPERIMENT_PRESETS:
+        valid = ", ".join(sorted(EXPERIMENT_PRESETS))
+        raise ValueError(f"Unknown experiment '{experiment}'. Valid options: {valid}")
+
+    mechanisms = EXPERIMENT_PRESETS[experiment].copy()
+    if overrides:
+        unknown = set(overrides) - set(mechanisms)
+        if unknown:
+            raise ValueError(f"Unknown mechanism override(s): {sorted(unknown)}")
+        mechanisms.update(overrides)
+    return mechanisms
 
 # ─────────────────────────────────────────────
 # DQN hyperparameters (for dqn_agent.py / train.py)

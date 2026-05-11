@@ -1,14 +1,3 @@
-"""
-dqn_agent.py — Deep Q-Network (DQN) agent, implemented from scratch with PyTorch.
-
-Components:
-    1. QNetwork         — MLP mapping obs → Q-values for each discrete action
-    2. ReplayBuffer     — fixed-size circular buffer of (s, a, r, s', done)
-    3. DQNAgent         — ε-greedy action selection + gradient update
-
-Training loop lives in train.py; this file only defines the agent.
-"""
-
 import random
 from collections import deque
 
@@ -30,15 +19,6 @@ from config import (
 # ─────────────────────────────────────────────
 
 class QNetwork(nn.Module):
-    """
-    Feed-forward network that maps a flat observation vector to Q-values
-    for every discrete action.
-
-    Args:
-        obs_dim : length of the observation vector
-        n_actions : number of discrete actions (20 for SovereignEnv)
-        hidden_sizes : tuple of hidden-layer widths
-    """
 
     def __init__(self, obs_dim, n_actions, hidden_sizes=DQN_HIDDEN_SIZES):
         super().__init__()
@@ -52,7 +32,6 @@ class QNetwork(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
-        """x: float tensor [batch, obs_dim] → [batch, n_actions]."""
         return self.net(x)
 
 
@@ -61,21 +40,14 @@ class QNetwork(nn.Module):
 # ─────────────────────────────────────────────
 
 class ReplayBuffer:
-    """
-    Fixed-size circular buffer storing transitions (s, a, r, s', done).
-
-    Sampling returns PyTorch tensors ready for a gradient step.
-    """
 
     def __init__(self, capacity=DQN_BUFFER_SIZE):
         self.buffer = deque(maxlen=capacity)
 
     def push(self, state, action, reward, next_state, done):
-        """Append a single transition."""
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample(self, batch_size, device):
-        """Sample a random minibatch as tensors on `device`."""
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
@@ -95,21 +67,6 @@ class ReplayBuffer:
 # ─────────────────────────────────────────────
 
 class DQNAgent:
-    """
-    DQN agent with:
-      - online Q-network and a frozen target network
-      - ε-greedy exploration with linear decay
-      - MSE loss on the Bellman residual
-      - gradient clipping
-
-    Usage:
-        agent = DQNAgent(obs_dim=16, n_actions=20)
-        for each transition:
-            action = agent.select_action(obs)
-            ...
-            agent.remember(obs, action, reward, next_obs, done)
-            loss = agent.learn()   # returns None if buffer too small
-    """
 
     def __init__(self, obs_dim, n_actions, device=None, seed=None):
         """Initialise networks, optimiser, and replay buffer."""
@@ -146,21 +103,10 @@ class DQNAgent:
     # ─────────────────────────────────────
 
     def epsilon(self):
-        """Current ε from a linear decay schedule."""
         frac = min(1.0, self.total_steps / DQN_EPS_DECAY_STEPS)
         return DQN_EPS_START + frac * (DQN_EPS_END - DQN_EPS_START)
 
     def select_action(self, obs, greedy=False):
-        """
-        ε-greedy action selection.
-
-        Args:
-            obs    : np.ndarray [obs_dim]
-            greedy : if True, always pick argmax (for evaluation)
-
-        Returns:
-            action : int
-        """
         self.total_steps += 1
 
         if not greedy and random.random() < self.epsilon():
@@ -176,16 +122,10 @@ class DQNAgent:
     # ─────────────────────────────────────
 
     def remember(self, state, action, reward, next_state, done):
-        """Store a transition in the replay buffer."""
         self.buffer.push(state, action, reward, next_state, float(done))
 
     def learn(self):
-        """
-        One gradient step on a minibatch.
 
-        Returns:
-            loss : float or None (None if buffer too small)
-        """
         if len(self.buffer) < max(DQN_MIN_BUFFER, DQN_BATCH_SIZE):
             return None
 
@@ -219,11 +159,9 @@ class DQNAgent:
     # ─────────────────────────────────────
 
     def save(self, path):
-        """Save online-network weights."""
         torch.save(self.q_net.state_dict(), path)
 
     def load(self, path):
-        """Load online-network weights into both online and target nets."""
         state = torch.load(path, map_location=self.device)
         self.q_net.load_state_dict(state)
         self.target_net.load_state_dict(state)

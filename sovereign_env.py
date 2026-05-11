@@ -16,6 +16,7 @@ import numpy as np
 
 from config import (
     NUM_ACTIONS, NUM_TERRITORIES, MAX_STEPS,
+    get_experiment_mechanisms,
 )
 from game_logic import init_state, execute_turn, decode_action
 
@@ -39,11 +40,13 @@ class SovereignEnv(gym.Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, render_mode=None, seed=None):
+    def __init__(self, render_mode=None, seed=None, experiment="full", mechanisms=None):
         """Initialise the SOVEREIGN environment."""
         super().__init__()
 
         self.render_mode = render_mode
+        self.experiment = experiment
+        self.mechanisms = get_experiment_mechanisms(experiment, mechanisms)
 
         # Action space: 5 political × 4 military = 20
         self.action_space = spaces.Discrete(NUM_ACTIONS)
@@ -73,10 +76,19 @@ class SovereignEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
-        self._state = init_state(rng=self._rng)
+        self._state = init_state(
+            rng=self._rng,
+            experiment=self.experiment,
+            mechanisms=self.mechanisms,
+        )
 
         obs = self._build_obs()
-        info = {"step": 0, "message": "Episode started."}
+        info = {
+            "step": 0,
+            "message": "Episode started.",
+            "experiment": self.experiment,
+            "mechanisms": self.mechanisms.copy(),
+        }
         return obs, info
 
     def step(self, action):
