@@ -12,9 +12,8 @@ import numpy as np
 
 from config import (
     W_TERRITORY, W_RESOURCE, W_OCCUPATION, W_LEGITIMACY,
-    W_SANCTION, W_INSURGENCY,
+    W_SANCTION, W_INSURGENCY, W_STEP,
     INSURGENCY_LAMBDA, MAX_STEPS,
-    SANCTION_THRESHOLD,
 )
 
 
@@ -74,18 +73,23 @@ def compute_legitimacy_penalty(legitimacy):
     return 1.0 - legitimacy
 
 
-def compute_sanction_penalty(theta, economy):
+def mechanism_enabled(state, name):
+    """Return whether a Section 10 mechanism is active for this episode."""
+    return state.get("mechanisms", {}).get(name, True)
+
+
+def compute_sanction_penalty(sanctions_active, economy):
     """
     Active only when sanctions threshold is crossed.
 
     Args:
-        theta   : float
+        sanctions_active : bool
         economy : float
 
     Returns:
         float
     """
-    if theta > SANCTION_THRESHOLD:
+    if sanctions_active:
         return 1.0 - economy
     return 0.0
 
@@ -127,24 +131,35 @@ def compute_reward(state, newly_captured, rng=None):
     territories = state["territories"]
     legitimacy  = state["legitimacy"]
     economy     = state["economy"]
-    theta       = state["theta"]
     t_occ       = state["t_occ"]
+    sanctions_active = state.get("sanctions_active", False)
 
     # ── Positive terms ──
     r_territory = W_TERRITORY * compute_territory_reward(territories)
     r_capture   = W_RESOURCE  * compute_resource_capture_bonus(newly_captured)
 
     # ── Negative terms ──
-    r_occ       = W_OCCUPATION  * compute_occupation_cost(t_occ)
-    r_legit     = W_LEGITIMACY  * compute_legitimacy_penalty(legitimacy)
-    r_sanction  = W_SANCTION    * compute_sanction_penalty(theta, economy)
+    r_occ = 0.0
+    if mechanism_enabled(state, "occupation"):
+        r_occ = W_OCCUPATION * compute_occupation_cost(t_occ)
 
-    insurgency_occurred, ins_pen = compute_insurgency(t_occ, rng)
+    r_legit = 0.0
+    if mechanism_enabled(state, "legitimacy"):
+        r_legit = W_LEGITIMACY * compute_legitimacy_penalty(legitimacy)
+
+    r_sanction = 0.0
+    if mechanism_enabled(state, "neutral_posture"):
+        r_sanction = W_SANCTION * compute_sanction_penalty(sanctions_active, economy)
+
+    insurgency_occurred, ins_pen = False, 0.0
+    if mechanism_enabled(state, "occupation"):
+        insurgency_occurred, ins_pen = compute_insurgency(t_occ, rng)
     r_insurgency = W_INSURGENCY * ins_pen
+    r_step = W_STEP
 
     # ── Net reward ──
     r_pos = r_territory + r_capture
-    r_neg = r_occ + r_legit + r_sanction + r_insurgency
+    r_neg = r_occ + r_legit + r_sanction + r_insurgency + r_step
     reward = r_pos - r_neg
 
     reward_info = {
@@ -154,6 +169,7 @@ def compute_reward(state, newly_captured, rng=None):
         "r_legitimacy": -r_legit,
         "r_sanction": -r_sanction,
         "r_insurgency": -r_insurgency,
+        "r_step": -r_step,
         "insurgency_occurred": insurgency_occurred,
         "r_pos": r_pos,
         "r_neg": r_neg,

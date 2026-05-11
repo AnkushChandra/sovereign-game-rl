@@ -61,7 +61,12 @@ def encode_action(pol_action, mil_action):
 # State initialisation
 # ─────────────────────────────────────────────
 
-def init_state(rng=None):
+def mechanism_enabled(state, name):
+    """Return whether a Section 10 mechanism is active for this episode."""
+    return state.get("mechanisms", {}).get(name, True)
+
+
+def init_state(rng=None, experiment="full", mechanisms=None):
     """
     Create and return the initial game state dict.
 
@@ -90,6 +95,14 @@ def init_state(rng=None):
         "economy": INITIAL_ECONOMY,
         "theta": INITIAL_THETA,
         "t_occ": INITIAL_T_OCC,
+
+        # Section 10 experiment controls
+        "experiment": experiment,
+        "mechanisms": mechanisms.copy() if mechanisms else {
+            "legitimacy": True,
+            "occupation": True,
+            "neutral_posture": True,
+        },
 
         # Bookkeeping
         "step": 0,
@@ -126,19 +139,25 @@ def apply_political_action(pol_action, state):
     Per PDF Section 6.1:
       - DO_NOTHING: slow L decay if L < 0.5; slow θ drift if t_occ > 0.
     """
-    delta_L, _direct_theta, delta_E = POLITICAL_EFFECTS[pol_action]
+    delta_L, direct_theta, delta_E = POLITICAL_EFFECTS[pol_action]
+
+    if not mechanism_enabled(state, "legitimacy"):
+        delta_L = 0.0
+    if not mechanism_enabled(state, "neutral_posture"):
+        direct_theta = 0.0
 
     # DO_NOTHING special rules
     if pol_action == "DO_NOTHING":
-        if state["legitimacy"] < 0.5:
+        if mechanism_enabled(state, "legitimacy") and state["legitimacy"] < 0.5:
             delta_L = DO_NOTHING_L_DECAY
-        if state["t_occ"] > 0:
+        if mechanism_enabled(state, "neutral_posture") and state["t_occ"] > 0:
             # Slow θ drift toward Defender when occupying and doing nothing
             state["theta"] = float(
                 np.clip(state["theta"] + DO_NOTHING_THETA_DRIFT, -1.0, 1.0)
             )
 
     state["legitimacy"] = float(np.clip(state["legitimacy"] + delta_L, 0.0, 1.0))
+    state["theta"] = float(np.clip(state["theta"] + direct_theta, -1.0, 1.0))
     state["economy"] = float(np.clip(state["economy"] + delta_E, 0.0, 1.0))
 
     # Negotiation counter
@@ -160,6 +179,8 @@ def apply_military_action(mil_action, state):
         newly_captured : list[dict]  — territories captured this step
     """
     delta_L = MILITARY_EFFECTS[mil_action]
+    if not mechanism_enabled(state, "legitimacy"):
+        delta_L = 0.0
     state["legitimacy"] = float(np.clip(state["legitimacy"] + delta_L, 0.0, 1.0))
 
     newly_captured = []
@@ -210,6 +231,10 @@ def apply_military_action(mil_action, state):
 
 def update_occupation(state):
     """Increment t_occ if Invader holds non-home territory, else reset."""
+    if not mechanism_enabled(state, "occupation"):
+        state["t_occ"] = 0
+        return
+
     territories = state["territories"]
     invader_non_home = any(
         t["controller"] == "I" and t["is_home"] != "I"
@@ -271,27 +296,33 @@ def check_terminal(state):
         reward : float  — terminal bonus/penalty (added on top of step reward)
     """
     # Political collapse
-    if state["legitimacy"] <= 0.0:
+    if mechanism_enabled(state, "legitimacy") and state["legitimacy"] <= 0.0:
         return True, "political_collapse", TERMINAL_POLITICAL_COLLAPSE
 
     # Military defeat
     if state["invader_units"] <= 0:
         return True, "military_defeat", TERMINAL_MILITARY_DEFEAT
 
-    # Total conquest
-    if all(t["controller"] == "I" for t in state["territories"]):
+    # Total conquest excludes Neutral home territory, which is treated as
+    # non-invadable neutral ground.
+    if all(
+        t["controller"] == "I"
+        for t in state["territories"]
+        if t["is_home"] != "N"
+    ):
         return True, "total_conquest", TERMINAL_TOTAL_CONQUEST
 
     # Negotiated settlement
     if (
-        state["consecutive_negotiate"] >= NEGOTIATE_CONSECUTIVE_NEEDED
+        mechanism_enabled(state, "legitimacy")
+        and state["consecutive_negotiate"] >= NEGOTIATE_CONSECUTIVE_NEEDED
         and state["steps_since_aggression"] >= NEGOTIATE_NO_AGGRESSION_STEPS
         and state["legitimacy"] >= NEGOTIATE_MIN_LEGITIMACY
     ):
         return True, "negotiated_peace", TERMINAL_NEGOTIATED_PEACE
 
     # Time limit
-    if state["step"] >= MAX_STEPS:
+    if state["step"] + 1 >= MAX_STEPS:
         return True, "time_limit", TERMINAL_TIME_LIMIT
 
     return False, None, 0.0
@@ -331,6 +362,10 @@ def execute_turn(action_int, state):
     newly_captured = apply_military_action(mil_action, state)
     info["newly_captured"] = [t["name"] for t in newly_captured]
 
+    # Refresh before the Defender response so home-turf advantage can apply
+    # immediately if the Invader just entered Defender home territory.
+    update_defender_home_flag(state)
+
     # Step 4: Defender responds
     defender_result = defender_respond(mil_action, pol_action, state)
     state["invader_units"] = max(
@@ -339,35 +374,47 @@ def execute_turn(action_int, state):
     info["defender"] = defender_result
 
     # Step 5-6: Resolve outcomes & update territory map (already done above)
-    update_defender_home_flag(state)
 
     # Step 7: Update L, E, t_occ
     update_occupation(state)
     update_economy(state)
 
-    # Occupation cost reduction if supply routes open
+    # Step 8: Neutral posture shift
+    if mechanism_enabled(state, "neutral_posture"):
+        state["theta"] = update_theta(
+            state["theta"], state["legitimacy"],
+            mil_action, pol_action, state["t_occ"], rng,
+        )
+    else:
+        state["theta"] = INITIAL_THETA
+    info["theta"] = state["theta"]
+
+    # Step 9: Threshold events
+    if mechanism_enabled(state, "neutral_posture"):
+        events = check_threshold_events(state["theta"], state)
+    else:
+        events = []
+    info["threshold_events"] = events
+
+    # Occupation cost reduction if supply routes open.
+    # Build this after threshold events so reward sees current sanctions/routes.
     effective_t_occ = state["t_occ"]
     if state["supply_routes_open"]:
         effective_t_occ = int(effective_t_occ * (1.0 - SUPPLY_ROUTE_OCC_REDUCTION))
     state_for_reward = {**state, "t_occ": effective_t_occ}
 
-    # Step 8: Neutral posture shift
-    state["theta"] = update_theta(
-        state["theta"], state["legitimacy"],
-        mil_action, pol_action, state["t_occ"], rng,
-    )
-    info["theta"] = state["theta"]
+    # Step 10-11: Compute reward and apply any stochastic state effects.
+    step_reward, reward_info = compute_reward(state_for_reward, newly_captured, rng)
+    if reward_info["insurgency_occurred"]:
+        state["invader_units"] = max(0, state["invader_units"] - 1)
+        info["insurgency_units_destroyed"] = 1
+    else:
+        info["insurgency_units_destroyed"] = 0
 
-    # Step 9: Threshold events
-    events = check_threshold_events(state["theta"], state)
-    info["threshold_events"] = events
-
-    # Step 10: Check terminal conditions
+    # Step 10: Check terminal conditions after insurgency can affect units.
     done, reason, terminal_reward = check_terminal(state)
     info["terminal_reason"] = reason
 
-    # Step 11: Compute reward
-    step_reward, reward_info = compute_reward(state_for_reward, newly_captured, rng)
     total_reward = step_reward + (terminal_reward if done else 0.0)
     info["reward_breakdown"] = reward_info
 

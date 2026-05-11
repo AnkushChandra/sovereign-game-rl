@@ -1,7 +1,7 @@
 """
 defender.py — Rule-based Defender behavior.
 
-The Defender responds deterministically to Invader actions each step.
+The Defender responds to Invader actions each step.
 Its policy prioritises defense when threatened and holds otherwise.
 """
 
@@ -41,13 +41,17 @@ def defender_respond(invader_mil_action, invader_pol_action, state):
                 "description": "Defender has no units left; cannot resist.",
             }
 
-        # Base chance to destroy one Invader unit
+        rng = state["rng"]
+
+        # Base resistance destroys one Invader unit.
         units_destroyed = 1
 
-        # Home-turf bonus: extra unit destroyed if fighting on home territory
+        # Home-turf advantage: 20% chance to destroy one additional unit.
         invader_on_home = state.get("invader_on_defender_home", False)
-        if invader_on_home and defender_units >= 2:
-            units_destroyed = 2  # stronger resistance on home soil
+        home_bonus_fired = False
+        if invader_on_home and defender_units >= 2 and rng.random() < DEFENDER_HOME_BONUS:
+            units_destroyed += 1
+            home_bonus_fired = True
 
         # Cap: can't destroy more Invader units than exist
         units_destroyed = min(units_destroyed, invader_units)
@@ -58,6 +62,7 @@ def defender_respond(invader_mil_action, invader_pol_action, state):
             "description": (
                 f"Defender resists {invader_mil_action}! "
                 f"Destroys {units_destroyed} Invader unit(s)."
+                + (" Home-turf bonus triggered." if home_bonus_fired else "")
             ),
         }
 
