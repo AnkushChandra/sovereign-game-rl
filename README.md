@@ -1,173 +1,198 @@
-# SOVEREIGN — Strategic Simulation for Deep Reinforcement Learning
+## Setup
 
-SOVEREIGN is a simplified Gymnasium-compatible RL environment that models a
-three-nation geopolitical conflict. A militarily superior **Invader** (the RL
-agent) must decide how to pursue its objectives through joint
-**political–military** actions, while a rule-based **Defender** resists and a
-stochastic **Neutral** nation shifts its alignment based on Invader behaviour.
-
-> **Core research question:** Can a militarily superior agent learn, through
-> experience alone, that invasion is a strategically dominated strategy?
-
----
-
-## File Structure
-
-```
-sovereign_project/
-├── main.py              # Random-action demo
-├── train.py             # DQN training + evaluation
-├── dqn_agent.py         # DQN agent (Q-net, replay buffer, ε-greedy) from scratch
-├── sovereign_env.py     # Gymnasium environment (SovereignEnv)
-├── game_logic.py        # Turn structure, action decoding, state updates
-├── reward.py            # Reward calculation (positive & negative terms)
-├── map.py               # Map / territory setup (9 territories)
-├── config.py            # All constants, weights, and thresholds
-├── defender.py          # Rule-based Defender behaviour
-├── neutral.py           # Neutral posture drift-diffusion model
-├── requirements.txt     # Minimal dependencies
-└── README.md            # This file
-```
-
----
-
-## Installation
+Use Python 3.10 or newer. A virtual environment is recommended.
 
 ```bash
-# Create and activate a virtual environment (recommended)
 python3 -m venv venv
-source venv/bin/activate        # macOS / Linux
-# venv\Scripts\activate         # Windows
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+On Windows, activate the environment with:
 
-## Quick Start
+```bash
+venv\Scripts\activate
+```
 
-### 1. Random-action demo (environment sanity check)
+## How to Run
+
+Run a random-action environment smoke test:
 
 ```bash
 python main.py
 ```
 
-Runs a few episodes with random actions and prints per-step info — mainly
-useful for verifying the environment mechanics.
-
-### 2. Train the DQN agent
+Train the DQN agent with the default settings:
 
 ```bash
 python train.py --episodes 300
 ```
 
-Logs per-episode reward, runs a greedy evaluation every 25 episodes, and
-saves the trained weights to `dqn_sovereign.pt`.
+Evaluate a saved model:
 
-### 3. Evaluate a saved agent
+```bash
+python train.py --eval
+```
+
+Evaluate and print one greedy step-by-step demo episode:
 
 ```bash
 python train.py --eval --demo
 ```
 
-## RL Algorithm: DQN (from scratch)
+Choose an experiment preset:
 
-`dqn_agent.py` implements a standard **Deep Q-Network**:
+```bash
+python train.py --experiment full --episodes 300
+python train.py --experiment no_legitimacy --episodes 300
+python train.py --experiment no_occupation --episodes 300
+python train.py --experiment no_neutral --episodes 300
+python train.py --experiment baseline --episodes 300
+```
 
-- **Q-network:** 2-layer MLP (`16 → 128 → 128 → 20`) mapping observations
-  to Q-values over the 20 joint actions.
-- **Target network:** separate frozen copy, synced every 500 gradient steps.
-- **Replay buffer:** 50 000 transitions, batch size 64.
-- **ε-greedy exploration:** linear decay from 1.0 → 0.05 over 20 000 steps.
-- **Optimiser:** Adam, lr = 5e-4, gradient clipping at norm 1.0.
-- **Loss:** MSE on the Bellman residual
-  `r + γ · max_a' Q_target(s', a') · (1 − done)`.
+Use the original reward and terminal profile instead of the tuned profile:
 
-All DQN hyperparameters live in `config.py` (`DQN_*` constants).
+```bash
+python train.py --config original --episodes 300
+```
 
-### Observed result
+By default, trained weights are saved to:
 
-Within ~50 training episodes the agent reliably converges on the
-**peace-dominant policy** predicted by the rulebook (§10): it repeatedly
-chooses `NEGOTIATE`, triggering the negotiated-settlement terminal
-(+40 reward). This demonstrates the PDF's central research claim — a
-militarily superior agent *learns* that invasion is dominated.
+```text
+dqn_sovereign.pt
+```
 
----
+## Repository Organization
 
-## Action Space
+```text
+sovereign-game-rl/
+├── README.md            # Setup, execution, and repository guide
+├── requirements.txt     # Python dependencies
+├── main.py              # Random-action smoke test
+├── train.py             # Training, evaluation, demos, and experiment presets
+├── dqn_agent.py         # DQN network, replay buffer, and epsilon-greedy policy
+├── sovereign_env.py     # Gymnasium Env wrapper
+├── game_logic.py        # Turn execution, action decoding, state transitions
+├── reward.py            # Reward components and insurgency sampling
+├── defender.py          # Rule-based Defender response policy
+├── neutral.py           # Neutral alignment update and threshold events
+├── map.py               # Default territory graph and territory metadata
+├── config.py            # Tuned constants, rewards, thresholds, DQN settings
+└── config_original.py   # Original reward and terminal override profile
+```
 
-The agent selects a single integer action in `Discrete(20)`, which encodes a
-**joint political–military** decision:
+## Code Structure
 
-| Political (5)     | Military (4) |
-|--------------------|--------------|
-| SEEK_ALLIANCE      | ADVANCE      |
-| IMPOSE_SANCTION    | HOLD         |
-| ISSUE_THREAT       | WITHDRAW     |
-| NEGOTIATE          | STRIKE       |
-| DO_NOTHING         |              |
+`sovereign_env.py` is the public Gymnasium interface. It exposes
+`SovereignEnv`, defines the observation and action spaces, and delegates game
+updates to `game_logic.py`.
 
-Decoding: `action = pol_index × 4 + mil_index`
+`game_logic.py` coordinates one full environment step. It decodes the joint
+action, applies political and military effects, invokes the Defender policy,
+updates occupation and economy state, applies Neutral events, computes rewards,
+and checks terminal conditions.
 
----
+`reward.py`, `neutral.py`, `defender.py`, and `map.py` keep major mechanics in
+separate modules so the environment wrapper stays small and readable.
 
-## State / Observation
+`config.py` is the main place to change experiment parameters. It contains
+starting units, action effects, reward weights, terminal rewards, threshold
+values, DQN hyperparameters, and experiment preset definitions.
 
-The observation is a flat `float32` vector of length **16**:
+`train.py` is the main experiment runner. It supports training, evaluation,
+greedy demo episodes, behavior summaries, config profiles, and mechanism
+ablations.
 
-| Index     | Variable              | Range      |
-|-----------|-----------------------|------------|
-| 0–8       | Territory control     | {0,1,2,3}  |
-| 9         | Invader units (norm.) | [0, 1]     |
-| 10        | Defender units (norm.)| [0, 1]     |
-| 11        | Legitimacy L          | [0, 1]     |
-| 12        | Economy E             | [0, 1]     |
-| 13        | Neutral posture θ     | [-1, +1]   |
-| 14        | Occupation duration   | [0, 1]     |
-| 15        | Step progress         | [0, 1]     |
+## Environment Summary
 
----
+The action space is `Discrete(20)`. Each integer action represents one
+political action and one military action:
 
-## Terminal Conditions
+```text
+action = political_index * 4 + military_index
+```
 
-An episode ends when:
+Political actions:
 
-- **Legitimacy ≤ 0** — political collapse (reward: −50)
-- **All Invader units destroyed** — military defeat (−30)
-- **Negotiated settlement** — diplomatic resolution (+40)
-- **Total conquest** — all territories captured (+10, intentionally modest)
-- **Time limit** — 200 steps reached (0)
+```text
+SEEK_ALLIANCE
+IMPOSE_SANCTION
+ISSUE_THREAT
+NEGOTIATE
+DO_NOTHING
+```
 
----
+Military actions:
 
-## Training API Example
+```text
+ADVANCE
+HOLD
+WITHDRAW
+STRIKE
+```
+
+The observation is a `float32` vector of length 16:
+
+```text
+0-8   territory controller encoding
+9     normalized Invader units
+10    normalized Defender units
+11    Invader legitimacy
+12    Invader economy
+13    Neutral alignment
+14    normalized occupation duration
+15    normalized step count
+```
+
+The default map has 9 territories:
+
+```text
+    I_HOME -- C1 -- C2 -- D_HOME
+               |     |
+              C3 -- C4
+               |     |
+    N_HOME -- C5 -- C6
+```
+
+## Experiment Presets
+
+The `--experiment` flag selects which environment mechanisms are active:
+
+```text
+full           legitimacy on,  occupation on,  neutral alignment on
+no_legitimacy  legitimacy off, occupation on,  neutral alignment on
+no_occupation  legitimacy on,  occupation off, neutral alignment on
+no_neutral     legitimacy on,  occupation on,  neutral alignment off
+baseline       legitimacy off, occupation off, neutral alignment off
+```
+
+These presets are defined in `config.py` and passed into `SovereignEnv` through
+`train.py`.
+
+## Example API Usage
 
 ```python
 from sovereign_env import SovereignEnv
-from dqn_agent   import DQNAgent
 
-env   = SovereignEnv(seed=0)
-obs, _ = env.reset()
-agent = DQNAgent(obs_dim=obs.shape[0], n_actions=env.action_space.n, seed=0)
+env = SovereignEnv(seed=0, experiment="full")
+obs, info = env.reset()
 
-for episode in range(300):
-    obs, _ = env.reset()
-    done = False
-    while not done:
-        action = agent.select_action(obs)
-        next_obs, r, term, trunc, _ = env.step(action)
-        agent.remember(obs, action, r, next_obs, term)
-        agent.learn()
-        obs, done = next_obs, term or trunc
-
-agent.save("dqn_sovereign.pt")
+done = False
+while not done:
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    done = terminated or truncated
 ```
 
----
+## DQN Implementation
 
-## References
+`dqn_agent.py` implements DQN directly with PyTorch:
 
-- Meta FAIR, *Human-level play in the game of Diplomacy* (Science, 2022)
-- CS-272 Reinforcement Learning course project
+- A two-hidden-layer MLP maps observations to Q-values.
+- A replay buffer stores transitions for off-policy learning.
+- A target network is periodically synchronized for stable bootstrapping.
+- Epsilon-greedy exploration decays over training steps.
+- Gradients are clipped to reduce unstable updates.
+
+The relevant hyperparameters are named with the `DQN_` prefix in `config.py`.
+
